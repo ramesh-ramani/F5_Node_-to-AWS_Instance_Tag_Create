@@ -1,0 +1,63 @@
+import boto3
+import boto.ec2
+import boto.utils
+from boto.vpc import VPCConnection
+from f5.bigip import ManagementRoot
+import certifi
+import urllib3
+import requests
+import re
+
+
+conn=boto.vpc.connect_to_region("us-west-2")
+client = boto3.client("ec2")
+
+
+########Below lines will extract the Nodes from the F5 BigIP device########
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+x_file = open('/usr/local/bin/python_scripts/nodes1.txt', 'r')
+
+## Connect to the BigIP
+mgmt = ManagementRoot("ip address of the F5 device", "useraname", "password")
+
+### Get a list of all the nodes and add the non-duplicate values to a list###
+test=list()
+pools = mgmt.tm.ltm.pools.get_collection()
+for pool in pools:
+    for member in pool.members_s.get_collection():
+        y=re.findall('^.+00[0-9]|^.+Site',member.name,re.MULTILINE)
+        if y[0] not in test:
+                              test.append(y[0])
+########Below lines will extract all the instaces values from all instances in us-w2, compare them with the f5 nodes, choose only the those f5 instances and add the instance and instance id to a dictionary########
+
+tag_list={}
+reservations = conn.get_all_reservations()
+for r in reservations:
+    for inst in r.instances:
+#        print inst.tag
+        for i in inst.tags:
+                k=inst.tags['Name']
+                v=inst.id
+                if any(inst.tags['Name'] in i for i in test): tag_list[inst.tags['Name']]=inst.id
+                else: continue
+
+#for k,v in tag_list.items():
+#    print k,v
+
+#########Below lines will add tags to the f5 instances (from the dictionary values)###########
+
+for k,v in tag_list.items():
+     response = client.create_tags(
+     Resources=[
+        v,
+    ],
+     Tags=[
+        {
+            'Key': 'Instance_Type',
+            'Value': 'F5_Node'
+        },
+    ]
+)
+
